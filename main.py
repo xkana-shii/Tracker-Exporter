@@ -97,7 +97,7 @@ def sanitize_filename(name: str) -> str:
 
 def save_exports(exports: dict[str, list[dict]]) -> str:
     """Save each list to a timestamped folder. Returns the folder path."""
-    folder_name = datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
+    folder_name = datetime.now().strftime("%d.%m.%Y_%H-%M-%S")
     folder_path = os.path.join(EXPORTS_DIR, folder_name)
     os.makedirs(folder_path, exist_ok=True)
 
@@ -133,15 +133,25 @@ def get_series_ids(items: list[dict]) -> dict[int, str]:
     return result
 
 
+def _parse_folder_date(name: str) -> datetime:
+    """Parse a folder name into a datetime for sorting."""
+    try:
+        return datetime.strptime(name, "%d.%m.%Y_%H-%M-%S")
+    except ValueError:
+        return datetime.min
+
+
 def find_previous_export(current_folder: str) -> str | None:
     """Find the most recent export folder before current_folder."""
     if not os.path.isdir(EXPORTS_DIR):
         return None
 
     current_name = os.path.basename(current_folder)
+    current_dt = _parse_folder_date(current_name)
     folders = sorted(
-        d for d in os.listdir(EXPORTS_DIR)
-        if os.path.isdir(os.path.join(EXPORTS_DIR, d)) and d < current_name
+        (d for d in os.listdir(EXPORTS_DIR)
+         if os.path.isdir(os.path.join(EXPORTS_DIR, d)) and _parse_folder_date(d) < current_dt),
+        key=_parse_folder_date,
     )
     if folders:
         return os.path.join(EXPORTS_DIR, folders[-1])
@@ -219,6 +229,7 @@ def rotate_exports() -> None:
     folders = sorted(
         [d for d in os.listdir(EXPORTS_DIR)
          if os.path.isdir(os.path.join(EXPORTS_DIR, d))],
+        key=_parse_folder_date,
     )
 
     while len(folders) > MAX_EXPORTS:
