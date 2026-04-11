@@ -2,6 +2,7 @@ import os
 import json
 import re
 import shutil
+import time
 from datetime import datetime
 
 import httpx
@@ -13,6 +14,32 @@ from config.config import (
 
 log = setup_logging()
 
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # seconds
+
+
+def _api_request(client: httpx.Client, method: str, url: str, **kwargs):
+    """Make an API request with automatic retry on transient errors."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = getattr(client, method)(url, **kwargs)
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"Server error {resp.status_code}",
+                    request=resp.request, response=resp,
+                )
+            return resp
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+            if attempt < MAX_RETRIES:
+                log.warning(
+                    "Request failed (attempt %d/%d): %s – retrying in %ds...",
+                    attempt, MAX_RETRIES, exc, RETRY_DELAY,
+                )
+                time.sleep(RETRY_DELAY)
+            else:
+                log.error("Request failed after %d attempts: %s", MAX_RETRIES, exc)
+                raise
+
 
 def login(client: httpx.Client) -> str:
     """Authenticate and return a session token."""
@@ -21,7 +48,7 @@ def login(client: httpx.Client) -> str:
         raise SystemExit(1)
 
     log.info("Logging in as '%s'...", USERNAME)
-    resp = client.put(f"{API_BASE_URL}/account/login", json={
+    resp = _api_request(client, "put", f"{API_BASE_URL}/account/login", json={
         "username": USERNAME,
         "password": PASSWORD,
     })
@@ -53,7 +80,7 @@ def logout(client: httpx.Client) -> None:
 def fetch_lists(client: httpx.Client) -> list[dict]:
     """Get all user lists (built-in + custom)."""
     log.info("Fetching user lists...")
-    resp = client.get(f"{API_BASE_URL}/lists")
+    resp = _api_request(client, "get", f"{API_BASE_URL}/lists")
     resp.raise_for_status()
     lists = resp.json()
     log.info("Found %d list(s): %s", len(lists), ", ".join(lst["title"] for lst in lists))
@@ -67,7 +94,7 @@ def export_list(client: httpx.Client, list_id: int, title: str) -> list[dict]:
     max_pages = 500  # Safety limit to prevent infinite loops
 
     while page <= max_pages:
-        resp = client.post(f"{API_BASE_URL}/lists/{list_id}/search", json={
+        resp = _api_request(client, "post", f"{API_BASE_URL}/lists/{list_id}/search", json={
             "page": page,
             "perpage": ITEMS_PER_PAGE,
         })
@@ -158,6 +185,21 @@ def find_previous_export(current_folder: str) -> str | None:
     return None
 
 
+def _load_prev_exports(prev_folder: str, titles: list[str]) -> dict[str, dict[int, str]]:
+    """Load previous exports and return {list_title: {series_id: title}}."""
+    result = {}
+    for title in titles:
+        safe_title = sanitize_filename(title)
+        prev_file = os.path.join(prev_folder, f"{safe_title}.json")
+        if os.path.isfile(prev_file):
+            try:
+                with open(prev_file, "r", encoding="utf-8") as f:
+                    result[title] = get_series_ids(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                result[title] = {}
+    return result
+
+
 def compare_exports(current_folder: str, exports: dict[str, list[dict]]) -> None:
     """Compare current export with the previous one and print changes."""
     prev_folder = find_previous_export(current_folder)
@@ -171,7 +213,43 @@ def compare_exports(current_folder: str, exports: dict[str, list[dict]]) -> None
     log.info("Changes since last export (%s)", prev_name)
     log.info("=" * 50)
 
+    # Build {series_id: list_title} maps for movement detection
+    all_titles = list(exports.keys())
+    prev_by_list = _load_prev_exports(prev_folder, all_titles)
+
+    prev_sid_to_list: dict[int, str] = {}
+    for list_title, ids in prev_by_list.items():
+        for sid in ids:
+            prev_sid_to_list[sid] = list_title
+
+    cur_sid_to_list: dict[int, str] = {}
+    for list_title, items in exports.items():
+        for sid in get_series_ids(items):
+            cur_sid_to_list[sid] = list_title
+
+    # Detect movements (series that changed lists)
+    moved: dict[int, tuple[str, str, str]] = {}  # sid -> (title, old_list, new_list)
+    for sid, new_list in cur_sid_to_list.items():
+        old_list = prev_sid_to_list.get(sid)
+        if old_list and old_list != new_list:
+            # Find the series name from current exports
+            for items in exports.values():
+                name_map = get_series_ids(items)
+                if sid in name_map:
+                    moved[sid] = (name_map[sid], old_list, new_list)
+                    break
+
     has_changes = False
+
+    # Log movements first
+    if moved:
+        has_changes = True
+        log.info("  Moved series:")
+        for sid, (name, old_list, new_list) in moved.items():
+            log.info("    ~ %s: %s -> %s", name, old_list, new_list)
+        log.info("")
+
+    moved_sids = set(moved.keys())
 
     for title, current_items in exports.items():
         safe_title = sanitize_filename(title)
@@ -191,12 +269,19 @@ def compare_exports(current_folder: str, exports: dict[str, list[dict]]) -> None
         current_ids = get_series_ids(current_items)
         prev_ids = get_series_ids(prev_items)
 
-        added_ids = set(current_ids) - set(prev_ids)
-        removed_ids = set(prev_ids) - set(current_ids)
+        # Exclude moved series from simple added/removed
+        added_ids = set(current_ids) - set(prev_ids) - moved_sids
+        removed_ids = set(prev_ids) - set(current_ids) - moved_sids
         count_diff = len(current_items) - len(prev_items)
 
         if not added_ids and not removed_ids:
-            log.info("  [%s] No changes (%d items)", title, len(current_items))
+            if count_diff == 0:
+                log.info("  [%s] No changes (%d items)", title, len(current_items))
+            else:
+                has_changes = True
+                sign = "+" if count_diff >= 0 else ""
+                log.info("  [%s] %d -> %d (%s%d) (movements only)",
+                         title, len(prev_items), len(current_items), sign, count_diff)
             continue
 
         has_changes = True
@@ -247,6 +332,8 @@ def main():
     log.info("MangaUpdates List Exporter")
     log.info("=" * 50)
 
+    start_time = time.time()
+
     with httpx.Client(timeout=30) as client:
         # 1. Login
         token = login(client)
@@ -279,8 +366,19 @@ def main():
             # 6. Rotate old exports
             rotate_exports()
 
+            # 7. Summary
+            elapsed = time.time() - start_time
+            total_items = sum(len(items) for items in exports.values())
+            log.info("")
+            log.info("=" * 50)
+            log.info(
+                "Summary: %d list(s), %d total item(s) in %.1fs",
+                len(exports), total_items, elapsed,
+            )
+            log.info("=" * 50)
+
         finally:
-            # 7. Logout
+            # 8. Logout
             logout(client)
 
     log.info("Done!")
