@@ -9,16 +9,16 @@ import httpx
 
 from config.config import (
     USERNAME, PASSWORD, API_BASE_URL, EXPORTS_DIR,
-    MAX_EXPORTS, ITEMS_PER_PAGE, setup_logging,
+    MAX_EXPORTS, ITEMS_PER_PAGE, MAX_RETRIES, RETRY_DELAY,
+    setup_logging,
 )
 
 log = setup_logging()
 
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
 
-
-def _api_request(client: httpx.Client, method: str, url: str, **kwargs):
+def _api_request(
+    client: httpx.Client, method: str, url: str, **kwargs
+) -> httpx.Response:
     """Make an API request with automatic retry on transient errors."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:

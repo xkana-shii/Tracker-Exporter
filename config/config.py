@@ -26,6 +26,10 @@ API_BASE_URL = "https://api.mangaupdates.com/v1"
 MAX_EXPORTS = 3          # Number of dated export folders to keep
 ITEMS_PER_PAGE = 100     # Items per API page request
 
+# Retry settings
+MAX_RETRIES = 3          # Number of retry attempts for API requests
+RETRY_DELAY = 5          # Seconds between retries
+
 # Logging setup
 LOG_FILE = os.path.join(LOGS_DIR, "mangaupdates_export.log")
 
