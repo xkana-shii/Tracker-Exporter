@@ -86,12 +86,20 @@ def run_sequential(to_run: list[tuple[str, str]], env: dict) -> dict[str, int]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run tracker exporters (concurrent by default).")
-    parser.add_argument("--sequential", action="store_true", help="Run trackers one after another instead of concurrently")
+    parser = argparse.ArgumentParser(
+        description="Run tracker exporters (concurrent by default)."
+    )
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Run trackers one after another instead of concurrently",
+    )
     args = parser.parse_args()
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = REPO_ROOT + (os.pathsep + env.get("PYTHONPATH", "") if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = REPO_ROOT + (
+        os.pathsep + env.get("PYTHONPATH", "") if env.get("PYTHONPATH") else ""
+    )
 
     to_run = []
     skipped = {}

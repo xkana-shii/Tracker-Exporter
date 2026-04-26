@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import re
 import shutil
 import time
@@ -8,8 +8,14 @@ from datetime import datetime
 import httpx
 
 from mangaupdates.config.mu_config import (
-    USERNAME, PASSWORD, API_BASE_URL, EXPORTS_DIR,
-    MAX_EXPORTS, ITEMS_PER_PAGE, MAX_RETRIES, RETRY_DELAY,
+    API_BASE_URL,
+    EXPORTS_DIR,
+    ITEMS_PER_PAGE,
+    MAX_EXPORTS,
+    MAX_RETRIES,
+    PASSWORD,
+    RETRY_DELAY,
+    USERNAME,
     setup_logging,
 )
 
@@ -18,7 +24,10 @@ log = setup_logging()
 
 # ── HTTP ──────────────────────────────────────────────────────────────[...]
 
-def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx.Response:
+
+def _api_request(
+    client: httpx.Client, method: str, url: str, **kwargs
+) -> httpx.Response:
     """Make a request with automatic retry on transient errors."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -26,12 +35,23 @@ def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx
             if resp.status_code >= 500:
                 raise httpx.HTTPStatusError(
                     f"Server error {resp.status_code}",
-                    request=resp.request, response=resp,
+                    request=resp.request,
+                    response=resp,
                 )
             return resp
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.HTTPStatusError,
+        ) as exc:
             if attempt < MAX_RETRIES:
-                log.warning("Attempt %d/%d failed: %s – retrying in %ds…", attempt, MAX_RETRIES, exc, RETRY_DELAY)
+                log.warning(
+                    "Attempt %d/%d failed: %s – retrying in %ds…",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                    RETRY_DELAY,
+                )
                 time.sleep(RETRY_DELAY)
             else:
                 log.error("All %d attempts failed: %s", MAX_RETRIES, exc)
@@ -40,16 +60,22 @@ def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx
 
 # ── Auth ──────────────────────────────────────────────────────────────[...]
 
+
 def login(client: httpx.Client) -> None:
     if not USERNAME or not PASSWORD:
         log.error("MU_USERNAME or MU_PASSWORD not set in .env")
         raise SystemExit(1)
 
     log.info("Logging in as '%s'…", USERNAME)
-    resp = _api_request(client, "put", f"{API_BASE_URL}/account/login", json={
-        "username": USERNAME,
-        "password": PASSWORD,
-    })
+    resp = _api_request(
+        client,
+        "put",
+        f"{API_BASE_URL}/account/login",
+        json={
+            "username": USERNAME,
+            "password": PASSWORD,
+        },
+    )
 
     if resp.status_code == 401:
         log.error("Login failed – invalid credentials")
@@ -75,12 +101,15 @@ def logout(client: httpx.Client) -> None:
 
 # ── Lists ─────────────────────────────────────────────────────────────��[...]
 
+
 def fetch_lists(client: httpx.Client) -> list[dict]:
     log.info("Fetching user lists…")
     resp = _api_request(client, "get", f"{API_BASE_URL}/lists")
     resp.raise_for_status()
     lists = resp.json()
-    log.info("Found %d list(s): %s", len(lists), ", ".join(lst["title"] for lst in lists))
+    log.info(
+        "Found %d list(s): %s", len(lists), ", ".join(lst["title"] for lst in lists)
+    )
     return lists
 
 
@@ -91,10 +120,15 @@ def fetch_list_items(client: httpx.Client, list_id: int, title: str) -> list[dic
     max_pages = 500
 
     while page <= max_pages:
-        resp = _api_request(client, "post", f"{API_BASE_URL}/lists/{list_id}/search", json={
-            "page": page,
-            "perpage": ITEMS_PER_PAGE,
-        })
+        resp = _api_request(
+            client,
+            "post",
+            f"{API_BASE_URL}/lists/{list_id}/search",
+            json={
+                "page": page,
+                "perpage": ITEMS_PER_PAGE,
+            },
+        )
         resp.raise_for_status()
 
         data = resp.json()
@@ -106,13 +140,16 @@ def fetch_list_items(client: httpx.Client, list_id: int, title: str) -> list[dic
             break
         page += 1
     else:
-        log.warning("%s: hit page limit (%d) – list may be incomplete", title, max_pages)
+        log.warning(
+            "%s: hit page limit (%d) – list may be incomplete", title, max_pages
+        )
 
     log.info("  %s: %d item(s)", title, len(all_items))
     return all_items
 
 
 # ── Save ──────────────────────────────────────────────────────────────[...]
+
 
 def _sanitize_filename(name: str) -> str:
     safe = re.sub(r'[<>:"/\\|?*]', "_", name).strip().strip(".")
@@ -138,6 +175,7 @@ def save_exports(exports: dict[str, list[dict]], folder: str) -> None:
 
 # ── Compare ─────────────────────────────────────────────────────────────[...]
 
+
 def _parse_folder_date(name: str) -> datetime:
     try:
         return datetime.strptime(name, "%d.%m.%Y_%H-%M-%S")
@@ -150,8 +188,12 @@ def _find_previous_export(current_folder: str) -> str | None:
         return None
     current_dt = _parse_folder_date(os.path.basename(current_folder))
     folders = sorted(
-        (d for d in os.listdir(EXPORTS_DIR)
-         if os.path.isdir(os.path.join(EXPORTS_DIR, d)) and _parse_folder_date(d) < current_dt),
+        (
+            d
+            for d in os.listdir(EXPORTS_DIR)
+            if os.path.isdir(os.path.join(EXPORTS_DIR, d))
+            and _parse_folder_date(d) < current_dt
+        ),
         key=_parse_folder_date,
     )
     return os.path.join(EXPORTS_DIR, folders[-1]) if folders else None
@@ -232,22 +274,35 @@ def compare_exports(current_folder: str, exports: dict[str, list[dict]]) -> None
             continue
 
         current_ids = _get_series_ids(current_items)
-        added   = set(current_ids) - set(prev_ids) - moved_sids
+        added = set(current_ids) - set(prev_ids) - moved_sids
         removed = set(prev_ids) - set(current_ids) - moved_sids
-        diff    = len(current_items) - len(prev_ids)
-        sign    = "+" if diff >= 0 else ""
+        diff = len(current_items) - len(prev_ids)
+        sign = "+" if diff >= 0 else ""
 
         if not added and not removed:
             if diff == 0:
                 log.info("  [%s] No changes (%d items)", title, len(current_items))
             else:
                 has_changes = True
-                log.info("  [%s] %d -> %d (%s%d) (movements only)",
-                         title, len(prev_ids), len(current_items), sign, diff)
+                log.info(
+                    "  [%s] %d -> %d (%s%d) (movements only)",
+                    title,
+                    len(prev_ids),
+                    len(current_items),
+                    sign,
+                    diff,
+                )
             continue
 
         has_changes = True
-        log.info("  [%s] %d -> %d (%s%d)", title, len(prev_ids), len(current_items), sign, diff)
+        log.info(
+            "  [%s] %d -> %d (%s%d)",
+            title,
+            len(prev_ids),
+            len(current_items),
+            sign,
+            diff,
+        )
         for sid in added:
             log.info("    + %s", current_ids[sid])
         for sid in removed:
@@ -263,11 +318,18 @@ def compare_exports(current_folder: str, exports: dict[str, list[dict]]) -> None
         log.info("  No changes detected across all lists")
 
 
+# ── Rotation ────────────────────────────────────────────────────────────��[...]
+
+
 def rotate_exports() -> None:
     if not os.path.isdir(EXPORTS_DIR):
         return
     folders = sorted(
-        [d for d in os.listdir(EXPORTS_DIR) if os.path.isdir(os.path.join(EXPORTS_DIR, d))],
+        [
+            d
+            for d in os.listdir(EXPORTS_DIR)
+            if os.path.isdir(os.path.join(EXPORTS_DIR, d))
+        ],
         key=_parse_folder_date,
     )
     while len(folders) > MAX_EXPORTS:
@@ -278,6 +340,9 @@ def rotate_exports() -> None:
             log.info("Deleted old export: %s", oldest)
         except OSError as exc:
             log.warning("Could not delete %s: %s", oldest, exc)
+
+
+# ── Main ──────────────────────────────────────────────────────────────[...]
 
 
 def main() -> None:
@@ -307,6 +372,18 @@ def main() -> None:
             save_exports(exports, folder)
             log.info("Exports saved to: %s", folder)
 
+            # ALSO write a single combined export file for the entire account
+            # Named: mu_complete_library-<dd.mm.YYYY_HH-MM-SS>.json
+            human_ts = datetime.now().strftime("%d.%m.%Y_%H-%M-%S")
+            combined_name = f"mu_complete_library-{human_ts}.json"
+            combined_path = os.path.join(folder, combined_name)
+            try:
+                with open(combined_path, "w", encoding="utf-8") as cf:
+                    json.dump(exports, cf, indent=2, ensure_ascii=False)
+                log.info("Saved combined export: %s", combined_path)
+            except Exception as e:
+                log.warning("Could not write combined export %s: %s", combined_path, e)
+
             compare_exports(folder, exports)
             rotate_exports()
 
@@ -314,8 +391,12 @@ def main() -> None:
             total_items = sum(len(v) for v in exports.values())
             log.info("")
             log.info("=" * 50)
-            log.info("Summary: %d list(s), %d total item(s) in %.1fs",
-                     len(exports), total_items, elapsed)
+            log.info(
+                "Summary: %d list(s), %d total item(s) in %.1fs",
+                len(exports),
+                total_items,
+                elapsed,
+            )
             log.info("=" * 50)
 
         finally:

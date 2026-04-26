@@ -24,12 +24,12 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 API_BASE_URL = "https://api.mangaupdates.com/v1"
 
 # Export settings
-MAX_EXPORTS = 10        # Number of dated export folders to keep
-ITEMS_PER_PAGE = 100    # Items per API page request
+MAX_EXPORTS = 10  # Number of dated export folders to keep
+ITEMS_PER_PAGE = 100  # Items per API page request
 
 # Retry settings
-MAX_RETRIES = 3         # Number of retry attempts for API requests
-RETRY_DELAY = 5         # Seconds between retries
+MAX_RETRIES = 3  # Number of retry attempts for API requests
+RETRY_DELAY = 5  # Seconds between retries
 
 # Logging setup
 LOG_FILE = os.path.join(LOGS_DIR, "mangaupdates_export.log")
@@ -41,13 +41,19 @@ def setup_logging():
         return logger
     logger.setLevel(logging.DEBUG)
 
-    fh = RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    fh = RotatingFileHandler(
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s", datefmt="%H:%M:%S"))
+    ch.setFormatter(
+        logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(message)s", datefmt="%H:%M:%S"
+        )
+    )
 
     logger.addHandler(fh)
     logger.addHandler(ch)

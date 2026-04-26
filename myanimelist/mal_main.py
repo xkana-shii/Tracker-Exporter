@@ -6,23 +6,29 @@ from datetime import datetime
 
 import requests
 from selenium import webdriver
+from selenium.common.exceptions import NoAlertPresentException
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoAlertPresentException
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from myanimelist.config.mal_config import (
-    USERNAME, PASSWORD, BASE_URL, EXPORTS_DIR,
-    MAX_EXPORTS, MAX_RETRIES, RETRY_DELAY,
+    BASE_URL,
+    EXPORTS_DIR,
+    MAX_EXPORTS,
+    MAX_RETRIES,
+    PASSWORD,
+    RETRY_DELAY,
+    USERNAME,
     setup_logging,
 )
 
 log = setup_logging()
 
 
-# ── Driver ─────────────────────────────────────────────────────────────�[...]
+# ── Driver ──────────────────────────────────────────────────────────────[...]
+
 
 def _build_driver(download_dir: str) -> webdriver.Chrome:
     opts = Options()
@@ -30,22 +36,27 @@ def _build_driver(download_dir: str) -> webdriver.Chrome:
     opts.add_argument("--disable-gpu")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--headless=new")
-    opts.add_experimental_option("prefs", {
-        "download.default_directory": os.path.abspath(download_dir),
-        "download.prompt_for_download": False,
-        "profile.default_content_settings.popups": 0,
-        "directory_upgrade": True,
-        "safebrowsing.enabled": True,
-        "safebrowsing.disable_download_protection": True,
-    })
+    opts.add_experimental_option(
+        "prefs",
+        {
+            "download.default_directory": os.path.abspath(download_dir),
+            "download.prompt_for_download": False,
+            "profile.default_content_settings.popups": 0,
+            "directory_upgrade": True,
+            "safebrowsing.enabled": True,
+            "safebrowsing.disable_download_protection": True,
+        },
+    )
+
     return webdriver.Chrome(options=opts)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────[...]
 
+
 def _dismiss_privacy_popup(driver: webdriver.Chrome) -> None:
     selectors = [
-        (By.XPATH,        "//button[normalize-space()='AGREE']"),
+        (By.XPATH, "//button[normalize-space()='AGREE']"),
         (By.CSS_SELECTOR, "button[mode='primary']"),
         (By.CSS_SELECTOR, "button[aria-label='Agree']"),
         (By.CSS_SELECTOR, "button#onetrust-accept-btn-handler"),
@@ -88,11 +99,14 @@ def login(driver: webdriver.Chrome) -> None:
 
 # ── Session ─────────────────────────────────────────────────────────────[...]
 
+
 def _build_session(driver: webdriver.Chrome) -> tuple[str, str, requests.Session]:
     """Extract CSRF token, user ID and a requests.Session from the driver cookies."""
     driver.get(f"{BASE_URL}/panel.php?go=export")
     WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.XPATH, "//form[@action='/panel.php?go=export2']"))
+        EC.presence_of_element_located(
+            (By.XPATH, "//form[@action='/panel.php?go=export2']")
+        )
     )
     page = driver.page_source
 
@@ -102,9 +116,7 @@ def _build_session(driver: webdriver.Chrome) -> tuple[str, str, requests.Session
     csrf_token = csrf_match.group(1)
 
     uid_match = re.search(r"'userId'\s*:\s*'(\d+)'", page)
-    if not uid_match:
-        raise RuntimeError("Could not extract user ID from export page")
-    user_id = uid_match.group(1)
+    user_id = uid_match.group(1) if uid_match else ""
 
     session = _refresh_session(driver)
     return csrf_token, user_id, session
@@ -114,7 +126,9 @@ def _refresh_session(driver: webdriver.Chrome) -> requests.Session:
     """Rebuild a requests.Session from the current driver cookies."""
     session = requests.Session()
     for c in driver.get_cookies():
-        session.cookies.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path", "/"))
+        session.cookies.set(
+            c["name"], c["value"], domain=c.get("domain"), path=c.get("path", "/")
+        )
     return session
 
 
@@ -126,11 +140,15 @@ EXPORTS = [
 ]
 
 
-def _trigger_export(driver: webdriver.Chrome, list_type: str, select_value: str) -> None:
+def _trigger_export(
+    driver: webdriver.Chrome, list_type: str, select_value: str
+) -> None:
     """Click the export button for a given list type via Selenium."""
     driver.get(f"{BASE_URL}/panel.php?go=export")
     form = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.XPATH, "//form[@action='/panel.php?go=export2']"))
+        EC.presence_of_element_located(
+            (By.XPATH, "//form[@action='/panel.php?go=export2']")
+        )
     )
     Select(form.find_element(By.NAME, "type")).select_by_value(select_value)
     form.find_element(By.CSS_SELECTOR, 'input[type="submit"][name="subexport"]').click()
@@ -155,13 +173,19 @@ def _try_direct_download(
     """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = session.post(f"{BASE_URL}/panel.php?go=export2", data={
-                "type": "1" if list_type == "anime" else "2",
-                "subexport": "Export My List",
-                "csrf_token": csrf_token,
-            }, allow_redirects=True)
+            resp = session.post(
+                f"{BASE_URL}/panel.php?go=export2",
+                data={
+                    "type": "1" if list_type == "anime" else "2",
+                    "subexport": "Export My List",
+                    "csrf_token": csrf_token,
+                },
+                allow_redirects=True,
+            )
             content_type = resp.headers.get("Content-Type", "")
-            if ("gzip" in content_type or "octet-stream" in content_type) and len(resp.content) > 1024:
+            if ("gzip" in content_type or "octet-stream" in content_type) and len(
+                resp.content
+            ) > 1024:
                 with open(out_path, "wb") as f:
                     f.write(resp.content)
                 log.info("Saved %s (%d bytes)", out_path, len(resp.content))
@@ -171,11 +195,16 @@ def _try_direct_download(
             if attempt < MAX_RETRIES:
                 log.warning(
                     "Direct download attempt %d/%d failed: %s – retrying in %ds…",
-                    attempt, MAX_RETRIES, exc, RETRY_DELAY,
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                    RETRY_DELAY,
                 )
                 time.sleep(RETRY_DELAY)
             else:
-                log.error("Direct download failed after %d attempts: %s", MAX_RETRIES, exc)
+                log.error(
+                    "Direct download failed after %d attempts: %s", MAX_RETRIES, exc
+                )
                 return False
     return False
 
@@ -188,10 +217,16 @@ def _download_from_panel(
         try:
             resp = session.get(f"{BASE_URL}/panel.php?go=export")
             resp.raise_for_status()
-            pattern = r'href="(https://myanimelist\.net/[^"]*{}list[^"]*\.xml\.gz)"'.format(list_type)
+            pattern = (
+                r'href="(https://myanimelist\.net/[^"]*{}list[^"]*\.xml\.gz)"'.format(
+                    list_type
+                )
+            )
             m = re.search(pattern, resp.text)
             if not m:
-                raise RuntimeError(f"{list_type.capitalize()} export link not found in panel")
+                raise RuntimeError(
+                    f"{list_type.capitalize()} export link not found in panel"
+                )
             link = m.group(1)
             log.info("Found export link: %s", link)
 
@@ -205,12 +240,20 @@ def _download_from_panel(
             if attempt < MAX_RETRIES:
                 log.warning(
                     "Panel download attempt %d/%d failed: %s – retrying in %ds…",
-                    attempt, MAX_RETRIES, exc, RETRY_DELAY,
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                    RETRY_DELAY,
                 )
                 time.sleep(RETRY_DELAY)
             else:
-                log.error("Panel download failed after %d attempts: %s", MAX_RETRIES, exc)
+                log.error(
+                    "Panel download failed after %d attempts: %s", MAX_RETRIES, exc
+                )
                 raise
+
+
+# ── Rotation ────────────────────────────────────────────────────────────��[...]
 
 
 def _parse_folder_date(name: str) -> datetime:
@@ -224,7 +267,11 @@ def rotate_exports() -> None:
     if not os.path.isdir(EXPORTS_DIR):
         return
     folders = sorted(
-        [d for d in os.listdir(EXPORTS_DIR) if os.path.isdir(os.path.join(EXPORTS_DIR, d))],
+        [
+            d
+            for d in os.listdir(EXPORTS_DIR)
+            if os.path.isdir(os.path.join(EXPORTS_DIR, d))
+        ],
         key=_parse_folder_date,
     )
     while len(folders) > MAX_EXPORTS:
@@ -237,6 +284,9 @@ def rotate_exports() -> None:
             log.warning("Could not delete %s: %s", oldest, exc)
 
 
+# ── Main ──────────────────────────────────────────────────────────────[...]
+
+
 def main() -> None:
     log.info("=" * 50)
     log.info("MyAnimeList Exporter")
@@ -244,7 +294,6 @@ def main() -> None:
 
     start = time.time()
     now = datetime.now()
-    timestamp = int(now.timestamp())
     folder = os.path.join(EXPORTS_DIR, now.strftime("%d.%m.%Y_%H-%M-%S"))
     os.makedirs(folder, exist_ok=True)
 
@@ -255,12 +304,54 @@ def main() -> None:
 
         for list_type, select_value in EXPORTS:
             log.info("Exporting %s list…", list_type)
+            # Record existing files in the download folder so we can detect new browser downloads
+            before_files = set(os.listdir(folder))
+
             _trigger_export(driver, list_type, select_value)
 
             # Refresh session cookies after each trigger
             session = _refresh_session(driver)
-            out_path = os.path.join(folder, f"{list_type}list_{timestamp}_-_{user_id}.xml.gz")
 
+            # Human-readable timestamp for filename
+            human_ts = datetime.now().strftime("%d.%m.%Y_%H-%M-%S")
+            out_path = os.path.join(
+                folder, f"mal_library-{list_type}-{human_ts}.xml.gz"
+            )
+
+            # Wait a short while for the browser to auto-download (if it does). If we detect
+            # a new .xml.gz file in the download folder, treat that as the export and rename/move it.
+            waited = 0
+            found_browser_file = None
+            while waited < 15:  # seconds
+                current = set(os.listdir(folder))
+                new = current - before_files
+                gz_files = [f for f in new if f.lower().endswith(".xml.gz")]
+                if gz_files:
+                    # pick the newest (by mtime) among the new gz files
+                    gz_paths = [os.path.join(folder, f) for f in gz_files]
+                    newest = max(gz_paths, key=lambda p: os.path.getmtime(p))
+                    found_browser_file = newest
+                    break
+                time.sleep(1)
+                waited += 1
+
+            if found_browser_file:
+                # Move/rename the browser-downloaded file to our canonical filename if needed
+                try:
+                    if os.path.abspath(found_browser_file) != os.path.abspath(out_path):
+                        shutil.move(found_browser_file, out_path)
+                    log.info("Using browser download for %s -> %s", list_type, out_path)
+                    continue  # skip manual download attempts
+                except Exception as e:
+                    log.warning(
+                        "Could not move browser download %s -> %s: %s",
+                        found_browser_file,
+                        out_path,
+                        e,
+                    )
+                    # fall through to manual download attempts
+
+            # Try direct POST download method
             if _try_direct_download(session, list_type, csrf_token, out_path):
                 continue
 

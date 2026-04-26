@@ -6,8 +6,13 @@ from datetime import datetime, timezone
 import httpx
 
 from mangabaka.config.mb_config import (
-    EMAIL, PASSWORD, BASE_URL, EXPORTS_DIR,
-    MAX_EXPORTS, MAX_RETRIES, RETRY_DELAY,
+    BASE_URL,
+    EMAIL,
+    EXPORTS_DIR,
+    MAX_EXPORTS,
+    MAX_RETRIES,
+    PASSWORD,
+    RETRY_DELAY,
     setup_logging,
 )
 
@@ -16,7 +21,10 @@ log = setup_logging()
 
 # ── HTTP ──────────────────────────────────────────────────────────────[...]
 
-def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx.Response:
+
+def _api_request(
+    client: httpx.Client, method: str, url: str, **kwargs
+) -> httpx.Response:
     """Make a request with automatic retry on transient errors."""
     kwargs.setdefault("follow_redirects", True)
 
@@ -32,12 +40,23 @@ def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx
             if resp.status_code >= 500:
                 raise httpx.HTTPStatusError(
                     f"Server error {resp.status_code}",
-                    request=resp.request, response=resp,
+                    request=resp.request,
+                    response=resp,
                 )
             return resp
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.HTTPStatusError,
+        ) as exc:
             if attempt < MAX_RETRIES:
-                log.warning("Attempt %d/%d failed: %s – retrying in %ds…", attempt, MAX_RETRIES, exc, RETRY_DELAY)
+                log.warning(
+                    "Attempt %d/%d failed: %s – retrying in %ds…",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                    RETRY_DELAY,
+                )
                 time.sleep(RETRY_DELAY)
             else:
                 log.error("All %d attempts failed: %s", MAX_RETRIES, exc)
@@ -45,6 +64,7 @@ def _api_request(client: httpx.Client, method: str, url: str, **kwargs) -> httpx
 
 
 # ── Auth ──────────────────────────────────────────────────────────────[...]
+
 
 def login(client: httpx.Client) -> None:
     if not EMAIL or not PASSWORD:
@@ -54,15 +74,20 @@ def login(client: httpx.Client) -> None:
     log.info("Logging in as '%s'…", EMAIL)
 
     # Do NOT follow redirects on login so we can inspect the raw response cookies
-    resp = client.post(f"{BASE_URL}/auth/sign-in/email", json={
-        "email": EMAIL,
-        "password": PASSWORD,
-        "callbackURL": "/my",
-    }, headers={
-        "Referer": f"{BASE_URL}/auth",
-        "Origin": BASE_URL,
-        "User-Agent": "Mozilla/5.0",
-    }, follow_redirects=False)
+    resp = client.post(
+        f"{BASE_URL}/auth/sign-in/email",
+        json={
+            "email": EMAIL,
+            "password": PASSWORD,
+            "callbackURL": "/my",
+        },
+        headers={
+            "Referer": f"{BASE_URL}/auth",
+            "Origin": BASE_URL,
+            "User-Agent": "Mozilla/5.0",
+        },
+        follow_redirects=False,
+    )
 
     if resp.status_code == 401:
         log.error("Login failed – invalid credentials")
@@ -85,7 +110,9 @@ def login(client: httpx.Client) -> None:
     # Strategy 2: token returned in JSON body, set it manually
     elif token:
         log.info("Setting cookie manually from token in response body")
-        client.cookies.set("__Secure-better-auth.session_token", token, domain="mangabaka.org")
+        client.cookies.set(
+            "__Secure-better-auth.session_token", token, domain="mangabaka.org"
+        )
 
     else:
         log.error("Login failed – no cookies or token in response")
@@ -99,15 +126,29 @@ def login(client: httpx.Client) -> None:
 
 EXPORTS = [
     ("mangabaka", f"{BASE_URL}/my/library/export/mangabaka", "json"),
-    ("mal",       f"{BASE_URL}/my/library/export/mal",       "xml"),
+    ("mal", f"{BASE_URL}/my/library/export/mal", "xml"),
 ]
 
-def _iso_filename(label: str, ext: str, dt: datetime) -> str:
-    ts = dt.strftime("%Y-%m-%dT%H-%M-%SZ")
-    suffix = f"-{label}" if label != "mangabaka" else ""
-    return f"mangabaka-library-export{suffix}-{ts}.{ext}"
 
-def download_export(client: httpx.Client, label: str, url: str, ext: str, folder: str, dt: datetime) -> None:
+def _iso_filename(label: str, ext: str, dt: datetime) -> str:
+    """
+    Return filenames like:
+      - mb_library-26.04.2026_14-32-16.json       (for label == "mangabaka")
+      - mb_library_mal-26.04.2026_14-32-16.xml   (for label == "mal")
+    """
+    ts = dt.strftime("%d.%m.%Y_%H-%M-%S")
+    if label == "mangabaka":
+        base = "mb_library"
+    elif label == "mal":
+        base = "mb_library_mal"
+    else:
+        base = f"mb_{label}"
+    return f"{base}-{ts}.{ext}"
+
+
+def download_export(
+    client: httpx.Client, label: str, url: str, ext: str, folder: str, dt: datetime
+) -> None:
     log.info("Downloading %s export…", label)
     resp = _api_request(client, "get", url)
     resp.raise_for_status()
@@ -121,17 +162,23 @@ def download_export(client: httpx.Client, label: str, url: str, ext: str, folder
 
 # ── Rotation ────────────────────────────────────────────────────────────��[...]
 
+
 def _parse_folder_date(name: str) -> datetime:
     try:
         return datetime.strptime(name, "%d.%m.%Y_%H-%M-%S")
     except ValueError:
         return datetime.min
 
+
 def rotate_exports() -> None:
     if not os.path.isdir(EXPORTS_DIR):
         return
     folders = sorted(
-        [d for d in os.listdir(EXPORTS_DIR) if os.path.isdir(os.path.join(EXPORTS_DIR, d))],
+        [
+            d
+            for d in os.listdir(EXPORTS_DIR)
+            if os.path.isdir(os.path.join(EXPORTS_DIR, d))
+        ],
         key=_parse_folder_date,
     )
     while len(folders) > MAX_EXPORTS:
@@ -145,6 +192,7 @@ def rotate_exports() -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────[...]
+
 
 def main() -> None:
     log.info("=" * 50)
