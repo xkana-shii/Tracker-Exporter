@@ -3,6 +3,7 @@ import re
 import shutil
 import time
 from datetime import datetime
+import gzip
 
 import requests
 from selenium import webdriver
@@ -164,6 +165,37 @@ def _trigger_export(
     log.info("Triggered %s export", list_type)
 
 
+def _maybe_extract_gz(gz_path: str) -> str | None:
+    """
+    If gz_path ends with .gz, attempt to decompress it to the same path without .gz.
+    Returns the path to the extracted file on success, or None on failure/no-op.
+
+    After successful extraction, the original .gz archive is removed.
+    """
+    if not gz_path or not gz_path.lower().endswith(".gz"):
+        return None
+    extracted_path = gz_path[:-3]
+    try:
+        with gzip.open(gz_path, "rb") as gz_f, open(extracted_path, "wb") as out_f:
+            shutil.copyfileobj(gz_f, out_f)
+        log.info(
+            "Extracted %s -> %s (%d bytes)",
+            gz_path,
+            extracted_path,
+            os.path.getsize(extracted_path),
+        )
+        # Remove the original .gz archive now that extraction succeeded
+        try:
+            os.remove(gz_path)
+            log.info("Removed archive %s", gz_path)
+        except Exception as exc_rm:
+            log.warning("Could not remove archive %s: %s", gz_path, exc_rm)
+        return extracted_path
+    except Exception as exc:
+        log.warning("Failed to extract %s: %s", gz_path, exc)
+        return None
+
+
 def _try_direct_download(
     session: requests.Session, list_type: str, csrf_token: str, out_path: str
 ) -> bool:
@@ -189,6 +221,8 @@ def _try_direct_download(
                 with open(out_path, "wb") as f:
                     f.write(resp.content)
                 log.info("Saved %s (%d bytes)", out_path, len(resp.content))
+                # Attempt to extract .gz to .xml
+                _maybe_extract_gz(out_path)
                 return True
             return False
         except requests.RequestException as exc:
@@ -235,6 +269,8 @@ def _download_from_panel(
             with open(out_path, "wb") as f:
                 f.write(dl.content)
             log.info("Saved %s (%d bytes)", out_path, len(dl.content))
+            # Attempt to extract .gz to .xml
+            _maybe_extract_gz(out_path)
             return
         except Exception as exc:
             if attempt < MAX_RETRIES:
@@ -341,6 +377,8 @@ def main() -> None:
                     if os.path.abspath(found_browser_file) != os.path.abspath(out_path):
                         shutil.move(found_browser_file, out_path)
                     log.info("Using browser download for %s -> %s", list_type, out_path)
+                    # Attempt to extract the moved .gz into .xml
+                    _maybe_extract_gz(out_path)
                     continue  # skip manual download attempts
                 except Exception as e:
                     log.warning(

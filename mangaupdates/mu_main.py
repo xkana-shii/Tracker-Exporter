@@ -152,18 +152,35 @@ def fetch_list_items(client: httpx.Client, list_id: int, title: str) -> list[dic
 
 
 def _sanitize_filename(name: str) -> str:
+    # Replace characters invalid on filesystems with underscores, convert spaces to underscores,
+    # remove any remaining undesirable characters, and return lowercase.
     safe = re.sub(r'[<>:"/\\|?*]', "_", name).strip().strip(".")
-    return safe if safe else "Unnamed_List"
+    safe = re.sub(r"\s+", "_", safe)
+    # Keep alphanumerics, underscore and hyphen.
+    safe = re.sub(r"[^A-Za-z0-9_\-]", "", safe)
+    safe = safe.lower()
+    return safe if safe else "unnamed_list"
 
 
-def save_exports(exports: dict[str, list[dict]], folder: str) -> None:
+def save_exports(exports: dict[str, list[dict]], folder: str, human_ts: str | None = None) -> None:
+    """
+    Save each list to a per-list file inside the current export folder.
+
+    Filenames follow the pattern: mu_<sanitized_list_name>_library-<date>.json
+    where <date> is the human timestamp (usually the export folder name).
+    """
+    if human_ts is None:
+        # Try to derive timestamp from folder name (folder is created with the timestamp in main)
+        human_ts = os.path.basename(folder)
+
     used_names: set[str] = set()
     for title, items in exports.items():
         safe_title = _sanitize_filename(title)
-        unique_title = safe_title
+        base = f"mu_{safe_title}_library-{human_ts}"
+        unique_title = base
         counter = 2
         while unique_title in used_names:
-            unique_title = f"{safe_title}_{counter}"
+            unique_title = f"{base}_{counter}"
             counter += 1
         used_names.add(unique_title)
 
@@ -210,9 +227,39 @@ def _get_series_ids(items: list[dict]) -> dict[int, str]:
 
 
 def _load_previous_list(prev_folder: str, title: str) -> dict[int, str]:
-    path = os.path.join(prev_folder, f"{_sanitize_filename(title)}.json")
-    if not os.path.isfile(path):
+    """
+    Load a previous per-list file from the prev_folder.
+
+    Backwards-compatible: looks for both the old per-list filename (sanitized.json)
+    and the new pattern mu_<sanitized>_library-<date>.json (date unknown, so we match prefix).
+    """
+    san = _sanitize_filename(title)
+    # Candidates: old-style <san>.json or new-style mu_<san>_library-<date>.json
+    try:
+        files = [f for f in os.listdir(prev_folder) if f.endswith(".json")]
+    except OSError:
         return {}
+
+    candidates = []
+    for f in files:
+        if f == f"{san}.json":
+            candidates.append(f)
+        elif f.startswith(f"mu_{san}_library-") and f.endswith(".json"):
+            candidates.append(f)
+
+    if not candidates:
+        return {}
+
+    # Prefer the new-style mu_... filename if present
+    chosen = None
+    for c in candidates:
+        if c.startswith(f"mu_{san}_library-"):
+            chosen = c
+            break
+    if chosen is None:
+        chosen = candidates[0]
+
+    path = os.path.join(prev_folder, chosen)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return _get_series_ids(json.load(f))
@@ -369,13 +416,13 @@ def main() -> None:
             }
 
             log.info("Saving exports…")
-            save_exports(exports, folder)
+            human_ts = os.path.basename(folder)
+            save_exports(exports, folder, human_ts)
             log.info("Exports saved to: %s", folder)
 
             # ALSO write a single combined export file for the entire account
-            # Named: mu_complete_library-<dd.mm.YYYY_HH-MM-SS>.json
-            human_ts = datetime.now().strftime("%d.%m.%Y_%H-%M-%S")
-            combined_name = f"mu_complete_library-{human_ts}.json"
+            # Named: mu_library-<dd.mm.YYYY_HH-MM-SS>.json
+            combined_name = f"mu_library-{human_ts}.json"
             combined_path = os.path.join(folder, combined_name)
             try:
                 with open(combined_path, "w", encoding="utf-8") as cf:
